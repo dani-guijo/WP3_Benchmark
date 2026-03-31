@@ -7,16 +7,17 @@ import numpy as  np
 from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
 from qiskit import transpile
 from qiskit.circuit import QuantumCircuit, Parameter
-import qat.lang.AQASM as qlm
-from qat.qlmaas import QLMaaSConnection
-from qat.core import Result
-from qat.fermion.circuits import make_ldca_circ, make_general_hwe_circ
+from qiskit.result import Result
+#import qat.lang.AQASM as qlm
+#from qat.qlmaas import QLMaaSConnection
+#from qat.core import Result
+#from qat.fermion.circuits import make_ldca_circ, make_general_hwe_circ
 sys.path.append("../../")
-from PH.utils.utils_ph import create_folder
+from utils.utils_ph import create_folder
 logger = logging.getLogger('__name__')
 
 
-def angles_ansatz01(circuit, pdf_parameters=None):
+def angles_ansatz01_qiskit(circuit, pdf_parameters=None):
     """
     Create the angles for ansatz01
 
@@ -208,7 +209,7 @@ def proccess_qresults(result, qubits, complete=True):
     return pdf
 
 
-def submit_circuit(qiskit_circuit, qiskit_qpu, qiskit_token):
+def submit_circuit_qiskit(qiskit_circuit, qiskit_qpu, qiskit_token):
     """
     Solving a complete Qiskit circuit
 
@@ -237,19 +238,17 @@ def submit_circuit(qiskit_circuit, qiskit_qpu, qiskit_token):
     return result
 
 
-def solving_circuit(qlm_state, nqubit, reverse=True):
+def solving_circuit_qiskit(qiskit_state, nqubit, reverse=True):
     """
     Solving a complete Qiskit circuit
 
     Parameters
     ----------
 
-    qiskit_circuit : QLM circuit
-        qlm circuit to solve
+    qiskit_circuit : Qiskit QuantumCircuit
+        Qiskit circuit to solve
     nqubit : int
         number of qubits of the input circuit
-    qlm_qpu : QLM qpu
-        QLM qpu for solving the circuit
     reverse : True
         This is for ordering the state from left to right
         If False the order will be form right to left
@@ -260,11 +259,11 @@ def solving_circuit(qlm_state, nqubit, reverse=True):
     state : pandas DataFrame
         DataFrame with the complete simulation of the circuit
     """
-    if not isinstance(qlm_state, Result):
-        qlm_state = qlm_state.join()
+    # if not isinstance(qiskit_state, Result):
+        # qiskit_state = qiskit_state.join()
         # time_q_run = float(result.meta_data["simulation_time"])
 
-    pdf_state = proccess_qresults(qlm_state, nqubit, True)
+    pdf_state = proccess_qresults(qiskit_state, nqubit, True)
     # For keep the correct qubit order convention for following
     # computations
     if reverse:
@@ -275,7 +274,7 @@ def solving_circuit(qlm_state, nqubit, reverse=True):
     return pdf_state
 
 
-def ansatz_selector(ansatz, **kwargs):
+def ansatz_selector_qiskit(ansatz, **kwargs):
     """
     Function for selecting an ansatz
 
@@ -319,7 +318,7 @@ def ansatz_selector(ansatz, **kwargs):
     return circuit
 
 
-class SolveCircuit:
+class SolveCircuitQiskit:
 
     def __init__(self, circuit, **kwargs):
         """
@@ -347,8 +346,8 @@ class SolveCircuit:
         Solve Circuit
         """
         tick = time.time()
-        state = submit_circuit(self.circuit, self.qpu)
-        self.state = solving_circuit(state, self.nqubits)
+        state = submit_circuit_qiskit(self.circuit, self.qpu)
+        self.state = solving_circuit_qiskit(state, self.nqubits)
         tack = time.time()
         self.solve_ansatz_time = tack - tick
         if self._save:
@@ -361,7 +360,7 @@ class SolveCircuit:
         Submit circuit
         """
         #self.circuit = self.circuit(**self.parameters)
-        self.state = submit_circuit(self.circuit, self.qpu)
+        self.state = submit_circuit_qiskit(self.circuit, self.qpu)
         if self._save:
             self.save_parameters()
 
@@ -378,27 +377,253 @@ class SolveCircuit:
 
         if status == "DONE":
             #Work done
-            nqubits = job_info.resources[0].nbqbits
+            result = job_info.result()
+            nqubits = result[0].meas.num_bits
             print(nqubits)
-            end = datetime.strptime(
-                job_info.ending_date.rsplit(".")[0],
-                "%Y-%m-%d %H:%M:%S")
-            start = datetime.strptime(
-                job_info.starting_date.rsplit(".")[0],
-                "%Y-%m-%d %H:%M:%S")
-            elapsed = end - start
-            elapsed = elapsed.total_seconds()
-            self.solve_ansatz_time = elapsed
+            self.solve_ansatz_time = job_info.usage()
             #state = connection.get_result(jobid)
-            state = service.get_job(jobid)
-            self.state = solving_circuit(state, nqubits)
+            state = result.get_statevector()
+            self.state = state
             print(self.state)
             if self._save:
                 self.save_state()
                 self.save_time()
-        elif status == 1:
+        elif status == "QUEUED":
             print("JobId: {} is pending".format(jobid))
-        elif status == 4:
+        elif status == "CANCELLED":
             print("JobId: {} was cancelled".format(jobid))
-        elif status == 2:
+        elif status == "RUNNING":
             print("JobId: {} is running".format(jobid))
+
+    def save_parameters(self):
+        """
+        Saving Parameters
+        """
+        self.parameters.to_csv(
+            self.filename+"_parameters.csv", sep=";")
+    def save_state(self):
+        """
+        Saving State
+        """
+        state_for_saving = self.state
+        state_for_saving.to_csv(self.filename+"_state.csv", sep=";")
+    def save_time(self):
+        pdf = pd.DataFrame(
+            [self.solve_ansatz_time], index=["solve_ansatz_time"]).T
+        pdf.to_csv(self.filename+"_solve_ansatz_time.csv", sep=";")
+
+
+def run_ansatz_qiskit(**configuration):
+    """
+    For creating an ansatz and solving it
+    """
+
+    nqubits = configuration.get("nqubits", None)
+    depth = configuration.get("depth", None)
+    ansatz = configuration.get("ansatz", None)
+    #qpu_ansatz_name = configuration.get("qpu_ansatz", None)
+    save = configuration.get("save", False)
+    folder = configuration.get("folder", None)
+
+    # Create Ansatz Circuit
+    logger.info("Creating ansatz circuit")
+    ansatz_conf = {
+        "nqubits" :nqubits,
+        "depth" : depth,
+    }
+    tick = time.time()
+    circuit = ansatz_selector_qiskit(ansatz, **ansatz_conf)
+    tack = time.time()
+    create_ansatz_time = tack - tick
+    logger.info("Created ansatz circuit in: %s", create_ansatz_time)
+    #from qat.core.console import display
+    #display(circuit)
+
+    # Fixing Parameters of the Circuit
+    if ansatz == "simple01":
+        #If ansatz is simple we use fixed angles
+        circuit, pdf_parameters = angles_ansatz01_qiskit(circuit)
+    else:
+        # For other ansatzes we use random parameters
+        parameters = {v_ : 2 * np.pi * np.random.rand() for i_, v_ in enumerate(
+            circuit.parameters)}
+        # Create the DataFrame with the info
+        angles = [k for k, v in parameters.items()]
+        values = [v for k, v in parameters.items()]
+        # create pdf
+        pdf_parameters = pd.DataFrame(
+            [angles, values],
+            index=['key', 'value']).T
+        circuit, _ = angles_ansatz01_qiskit(circuit, pdf_parameters)
+    #display(circuit)
+
+    # For creating the folder for saving
+    if save:
+        folder = create_folder(folder)
+        filename = "ansatz_{}_nqubits_{}_depth_{}_qpu_ansatz_{}".format(
+            ansatz, nqubits, depth, configuration.get("qpu_ansatz", None))
+        filename = folder + filename
+    else:
+        filename = ""
+
+    # Solving Ansatz
+    solve_conf = {
+        "qpu" : configuration.get("qpu", None),
+        "nqubits" :nqubits,
+        "parameters" : pdf_parameters,
+        "filename": filename,
+        "save": save
+    }
+    solv_ansatz = SolveCircuitQiskit(circuit, **solve_conf)
+    solve = configuration.get("solve", True)
+    submit = configuration.get("submit", False)
+    if solve:
+        logger.info("Solving ansatz circuit")
+        solv_ansatz.run()
+        solve_ansatz_time = solv_ansatz.solve_ansatz_time
+        logger.info("Solved ansatz circuit in: %s", solve_ansatz_time)
+        output_dict = {
+            "state" : solv_ansatz.state,
+            "parameters": pdf_parameters,
+            "solve_ansatz_time": solve_ansatz_time,
+            "filename" : filename,
+            "circuit": circuit
+        }
+        #print(output_dict["state"])
+        return output_dict
+    if submit:
+        print(solve_conf["filename"])
+        logger.info("Ansatz will be submited to QLM")
+        solv_ansatz.submit()
+        solve_ansatz_time = solv_ansatz.solve_ansatz_time
+        return None
+    
+
+def getting_job_qiskit(**configuration):
+    """
+    For getting a job from Qiskit. Configuration need to have following
+    keys: nqubits, job_id, save, filename
+    """
+    #nqubits = configuration.get("nqubits", None)
+    job_id = configuration["job_id"]
+    save = configuration.get("save", False)
+    filename = configuration["filename"]
+    logger.info("Job id: %s will be obtained from QLM", job_id)
+    solve_conf = {
+        "qpu" : None,
+        "nqubits" :None,
+        "parameters" : None,
+        "filename": filename,
+        "save": save
+    }
+    solv_ansatz = SolveCircuitQiskit(None, **solve_conf)
+    solv_ansatz.get_job_results(job_id)
+    return solv_ansatz.state
+
+
+if __name__ == "__main__":
+    # For sending ansatzes to QLM
+    import argparse
+    sys.path.append("../../../")
+    from qpu.select_qpu import select_qpu
+    logging.basicConfig(
+        format='%(asctime)s-%(levelname)s: %(message)s',
+        datefmt='%m/%d/%Y %I:%M:%S %p',
+        level=logging.INFO
+        #level=logging.DEBUG
+    )
+    logger = logging.getLogger('__name__')
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "-nqubits",
+        dest="nqubits",
+        type=int,
+        help="Number of qbits for the ansatz.",
+        default=None,
+    )
+    parser.add_argument(
+        "-depth",
+        dest="depth",
+        type=int,
+        help="Depth for ansatz.",
+        default=None,
+    )
+    parser.add_argument(
+        "-ansatz",
+        dest="ansatz",
+        type=str,
+        help="Ansatz type: simple01, simple02, lda or hwe.",
+        default=None,
+    )
+    #QPU argument
+    parser.add_argument(
+        "-qpu_ansatz",
+        dest="qpu_ansatz",
+        type=str,
+        default=None,
+        help="QPU for ansatz simulation: " +
+            "c, python, linalg, mps, qlmass_linalg, qlmass_mps",
+    )
+    parser.add_argument(
+        "-folder",
+        dest="folder",
+        type=str,
+        default="./",
+        help="Path for storing results",
+    )
+    parser.add_argument(
+        "-filename",
+        dest="filename",
+        type=str,
+        default="",
+        help="Base Filename for saving. Only Valid with get_job",
+    )
+    parser.add_argument(
+        "--save",
+        dest="save",
+        default=False,
+        action="store_true",
+        help="For storing results",
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--solve",
+        dest="solve",
+        default=False,
+        action="store_true",
+        help="For solving complete ansatz",
+    )
+    group.add_argument(
+        "--submit",
+        dest="submit",
+        default=False,
+        action="store_true",
+        help="For submiting ansatz to QLM",
+    )
+    group.add_argument(
+        "--get_job",
+        dest="get_job",
+        default=False,
+        action="store_true",
+        help="For getting a job from QLM",
+    )
+    parser.add_argument(
+        "-jobid",
+        dest="job_id",
+        type=str,
+        default=None,
+        help="jobid of the QLM job",
+    )
+    args = parser.parse_args()
+    configuration = vars(args)
+    qpu_config = {"qpu_type": args.qpu_ansatz}
+    configuration.update({"qpu": select_qpu(qpu_config)})
+    configuration.update({"qpu_ansatz": args.qpu_ansatz})
+    if args.get_job:
+        state = getting_job_qiskit(**configuration)
+    else:
+        output = run_ansatz_qiskit(**configuration)
+        if output is not None:
+            print(output["state"])
