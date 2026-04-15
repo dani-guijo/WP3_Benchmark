@@ -5,9 +5,13 @@ from datetime import datetime
 import pandas as pd
 import numpy as  np
 from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
+from qiskit_algorithms.minimum_eigensolvers import SamplingVQE
+from qiskit_algorithms.optimizers import COBYLA, SciPyOptimizer
 from qiskit import transpile
+from qiskit.quantum_info import SparsePauliOp
 from qiskit.circuit import QuantumCircuit, Parameter
 from qiskit.result import Result
+from qiskit_aer import AerSimulator
 #import qat.lang.AQASM as qlm
 #from qat.qlmaas import QLMaaSConnection
 #from qat.core import Result
@@ -209,7 +213,7 @@ def proccess_qresults(result, qubits, complete=True):
     return pdf
 
 
-def submit_circuit_qiskit(qiskit_circuit, qiskit_qpu, qiskit_token):
+def submit_circuit_qiskit(qiskit_circuit):#, qiskit_qpu, qiskit_token):
     """
     Solving a complete Qiskit circuit
 
@@ -222,18 +226,24 @@ def submit_circuit_qiskit(qiskit_circuit, qiskit_qpu, qiskit_token):
         Qiskit QPU for solving the circuit
     """
     # Creating the qlm_job
-    service = QiskitRuntimeService(channel="ibm_quantum", token=qiskit_token)
-    backend = service.backend(qiskit_qpu)
-    qiskit_circuit.measure_all()
+    #service = QiskitRuntimeService(channel="ibm_quantum", token=qiskit_token)
+    #backend = service.backend(qiskit_qpu)
+    backend = AerSimulator()
+    nqubits = qiskit_circuit.num_qubits
+    #qiskit_circuit.measure_all()
 
     # Transpile circuit to ISA
     isa_circuit = transpile(qiskit_circuit, backend=backend)
+    observable = SparsePauliOp('Z'*nqubits)
+    isa_observable = observable.apply_layout(isa_circuit.layout)
 
-    # Submit job using Sampler
+    # Submit job using Estimator
     sampler = Sampler(backend)
-    job = sampler.run([(isa_circuit,)])
-    print(f"Job ID: {job.job_id()}")
-    result = job.result()
+    vqe = SamplingVQE(sampler=sampler, ansatz=isa_circuit, optimizer=SciPyOptimizer(method='COBYLA'))
+    result = vqe.compute_minimum_eigenvalue(operator=isa_observable)
+    #job = estimator.run([(isa_circuit, isa_observable)])
+    #print(f"Job ID: {job.job_id()}")
+    result = result
 
     return result
 
