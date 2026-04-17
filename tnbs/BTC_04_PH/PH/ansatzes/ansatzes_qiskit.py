@@ -157,7 +157,7 @@ def ansatz_qiskit_02(nqubits, depth=3):
     return circuit
 
 
-def proccess_qresults(result, qubits, complete=True):
+def proccess_qresults(result, qubits):
     """
     Post Process a Qiskit results for creating a pandas DataFrame
 
@@ -168,100 +168,6 @@ def proccess_qresults(result, qubits, complete=True):
         returned object from a qpu submit
     qubits : int
         number of qubits
-    complete : bool
-        for return the complete basis state.
-    """
-
-    # Process the results
-    if complete:
-        states = []
-        list_int = []
-        list_int_lsb = []
-        for i in range(2**qubits):
-            reversed_i = int("{:0{width}b}".format(i, width=qubits)[::-1], 2)
-            list_int.append(reversed_i)
-            list_int_lsb.append(i)
-            states.append("|" + bin(i)[2:].zfill(qubits) + ">")
-        probability = np.zeros(2**qubits)
-        amplitude = np.zeros(2**qubits, dtype=np.complex_)
-        for samples in result:
-            probability[samples.state.lsb_int] = samples.probability
-            amplitude[samples.state.lsb_int] = samples.amplitude
-
-        pdf = pd.DataFrame(
-            {
-                "States": states,
-                "Int_lsb": list_int_lsb,
-                "Probability": probability,
-                "Amplitude": amplitude,
-                "Int": list_int,
-            }
-        )
-    else:
-        list_for_results = []
-        for sample in result:
-            list_for_results.append([
-                sample.state, sample.state.lsb_int, sample.probability,
-                sample.amplitude, sample.state.int,
-            ])
-
-        pdf = pd.DataFrame(
-            list_for_results,
-            columns=['States', "Int_lsb", "Probability", "Amplitude", "Int"]
-        )
-        pdf.sort_values(["Int_lsb"], inplace=True)
-    return pdf
-
-
-def submit_circuit_qiskit(qiskit_circuit):#, qiskit_qpu, qiskit_token):
-    """
-    Solving a complete Qiskit circuit
-
-    Parameters
-    ----------
-
-    qiskit_circuit : Qiskit QuantumCircuit
-        Qiskit circuit to solve
-    qiskit_qpu : Qiskit QPU
-        Qiskit QPU for solving the circuit
-    """
-    # Creating the qlm_job
-    #service = QiskitRuntimeService(channel="ibm_quantum", token=qiskit_token)
-    #backend = service.backend(qiskit_qpu)
-    backend = AerSimulator()
-    nqubits = qiskit_circuit.num_qubits
-    #qiskit_circuit.measure_all()
-
-    # Transpile circuit to ISA
-    isa_circuit = transpile(qiskit_circuit, backend=backend)
-    observable = SparsePauliOp('Z'*nqubits)
-    isa_observable = observable.apply_layout(isa_circuit.layout)
-
-    # Submit job using Estimator
-    sampler = Sampler(backend)
-    vqe = SamplingVQE(sampler=sampler, ansatz=isa_circuit, optimizer=SciPyOptimizer(method='COBYLA'))
-    result = vqe.compute_minimum_eigenvalue(operator=isa_observable)
-    #job = estimator.run([(isa_circuit, isa_observable)])
-    #print(f"Job ID: {job.job_id()}")
-    result = result
-
-    return result
-
-
-def solving_circuit_qiskit(qiskit_state, nqubit, reverse=True):
-    """
-    Solving a complete Qiskit circuit
-
-    Parameters
-    ----------
-
-    qiskit_circuit : Qiskit QuantumCircuit
-        Qiskit circuit to solve
-    nqubit : int
-        number of qubits of the input circuit
-    reverse : True
-        This is for ordering the state from left to right
-        If False the order will be form right to left
 
     Returns
     _______
@@ -269,19 +175,60 @@ def solving_circuit_qiskit(qiskit_state, nqubit, reverse=True):
     state : pandas DataFrame
         DataFrame with the complete simulation of the circuit
     """
-    # if not isinstance(qiskit_state, Result):
-        # qiskit_state = qiskit_state.join()
-        # time_q_run = float(result.meta_data["simulation_time"])
 
-    pdf_state = proccess_qresults(qiskit_state, nqubit, True)
-    # For keep the correct qubit order convention for following
-    # computations
-    if reverse:
-        pdf_state.sort_values('Int', inplace=True)
-    # A n-qubit-tensor is prefered for returning
-    # state = np.array(pdf_state['Amplitude'])
-    # mps_state = state.reshape(tuple(2 for i in range(nqubit)))
-    return pdf_state
+    # Process the results
+    list_for_results = []
+    eigenstate = result.eigenstate
+    for state, amplitude in eigenstate.items():
+        list_for_results.append([
+            state[::-1], int(state[::-1], 2), amplitude**2, amplitude
+        ])
+    for i in range(qubits):
+        list_for_results.append([
+            str(bin(i)[2:]), i, 0, 0
+        ])
+    pdf = pd.DataFrame(
+        list_for_results,
+        columns=['States', "Int", "Probability", "Amplitude"]
+    )
+    for i in range(qubits):
+        if i not in list(pdf['Int']):
+            pdf.loc[pdf.index.max()+1] = [str(bin(i)[2:]), i, 0, 0]
+    pdf.sort_values(["Int"], inplace=True)
+    return pdf
+
+
+def solve_circuit_qiskit(qiskit_circuit):
+    """
+    Solving a complete Qiskit circuit
+
+    Parameters
+    ----------
+
+    qiskit_circuit : Qiskit QuantumCircuit
+        Qiskit circuit to solve
+    
+    Returns
+    _______
+
+    state : pandas DataFrame
+        DataFrame with the complete simulation of the circuit
+    """
+    # Select backend
+    backend = AerSimulator()
+    nqubits = qiskit_circuit.num_qubits
+
+    # Transpile circuit to ISA
+    isa_circuit = transpile(qiskit_circuit, backend=backend)
+    observable = SparsePauliOp('Z'*nqubits)
+    isa_observable = observable.apply_layout(isa_circuit.layout)
+
+    # Solve circuit using SamplingVQE
+    sampler = Sampler(backend)
+    vqe = SamplingVQE(sampler=sampler, ansatz=isa_circuit, optimizer=SciPyOptimizer(method='COBYLA'))
+    result = vqe.compute_minimum_eigenvalue(operator=isa_observable)
+
+    return result
 
 
 def ansatz_selector_qiskit(ansatz, **kwargs):
