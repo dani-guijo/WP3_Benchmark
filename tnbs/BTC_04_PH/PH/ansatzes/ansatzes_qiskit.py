@@ -157,7 +157,7 @@ def ansatz_qiskit_02(nqubits, depth=3):
     return circuit
 
 
-def proccess_qresults(result, qubits):
+def proccess_qresults_qiskit(result, qubits):
     """
     Post Process a Qiskit results for creating a pandas DataFrame
 
@@ -183,18 +183,15 @@ def proccess_qresults(result, qubits):
         list_for_results.append([
             state[::-1], int(state[::-1], 2), amplitude**2, amplitude
         ])
-    for i in range(qubits):
-        list_for_results.append([
-            str(bin(i)[2:]), i, 0, 0
-        ])
     pdf = pd.DataFrame(
         list_for_results,
         columns=['States', "Int", "Probability", "Amplitude"]
     )
-    for i in range(qubits):
+    for i in range(2**qubits):
         if i not in list(pdf['Int']):
             pdf.loc[pdf.index.max()+1] = [str(bin(i)[2:]), i, 0, 0]
     pdf.sort_values(["Int"], inplace=True)
+    print(pdf.head(2**qubits))
     return pdf
 
 
@@ -227,8 +224,9 @@ def solve_circuit_qiskit(qiskit_circuit):
     sampler = Sampler(backend)
     vqe = SamplingVQE(sampler=sampler, ansatz=isa_circuit, optimizer=SciPyOptimizer(method='COBYLA'))
     result = vqe.compute_minimum_eigenvalue(operator=isa_observable)
+    pdf = proccess_qresults_qiskit(result, nqubits)
 
-    return result
+    return pdf
 
 
 def ansatz_selector_qiskit(ansatz, **kwargs):
@@ -303,23 +301,13 @@ class SolveCircuitQiskit:
         Solve Circuit
         """
         tick = time.time()
-        state = submit_circuit_qiskit(self.circuit, self.qpu)
-        self.state = solving_circuit_qiskit(state, self.nqubits)
+        self.state = solve_circuit_qiskit(self.circuit)
         tack = time.time()
         self.solve_ansatz_time = tack - tick
         if self._save:
             self.save_state()
             self.save_parameters()
             self.save_time()
-
-    def submit(self):
-        """
-        Submit circuit
-        """
-        #self.circuit = self.circuit(**self.parameters)
-        self.state = submit_circuit_qiskit(self.circuit, self.qpu)
-        if self._save:
-            self.save_parameters()
 
     def get_job_results(self, jobid, qiskit_token):
         """
