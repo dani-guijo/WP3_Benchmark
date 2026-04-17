@@ -15,8 +15,8 @@ import numpy as np
 import pandas as pd
 from scipy import linalg
 sys.path.append("../../")
-from PH.parent_hamiltonian.pauli import pauli_decomposition
-from PH.parent_hamiltonian.contractions import reduced_matrix
+from parent_hamiltonian.pauli import pauli_decomposition
+from parent_hamiltonian.contractions import reduced_matrix
 import logging
 logger = logging.getLogger('__name__')
 
