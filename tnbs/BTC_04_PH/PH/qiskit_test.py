@@ -1,5 +1,5 @@
-from ansatzes.ansatzes_qiskit import angles_ansatz01_qiskit, ansatz_qiskit_01, ansatz_qiskit_02, submit_circuit_qiskit
-#from parent_hamiltonian.parent_hamiltonian import PH
+from ansatzes.ansatzes_qiskit import angles_ansatz01_qiskit, ansatz_qiskit_01, ansatz_qiskit_02, solve_circuit_qiskit, SolveCircuitQiskit
+from parent_hamiltonian.parent_hamiltonian import PH
 import pandas as pd
 import numpy as  np
 from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
@@ -9,15 +9,25 @@ from qiskit.result import Result
 from qiskit_aer import AerSimulator
 
 qc = ansatz_qiskit_02(nqubits=3, depth=2)
-#print(circ)
-#qc, _ = angles_ansatz01_qiskit(circuit=circ)
+
+# Use SamplingVQE to solve the circuit
 print(qc)
-result = submit_circuit_qiskit(qc)
-print(f"  > Expectation value: {result.eigenvalue}")
-print(f"  > Eigenstate: {result.eigenstate}")
-#counts = result[0].get_counts()
-#print(result[0].data.items())
-#print(result[0].data.get_counts())
+scq = SolveCircuitQiskit(qc)
+scq.run()
+state = list(scq.state['Amplitude'])
 
+print(f"  > Eigenstate: {state}")
 
+# Compute Naive PH
+n_ph = PH(state)
+n_ph.naive_ph()
+print(f"  > Naive PH shape: {n_ph.rho.shape}") # Must be (2^N,2^N)
+n_pdf = n_ph.pauli_pdf
+print(n_pdf.head())
 
+# Compute Local PH
+l_ph = PH(state)
+l_ph.local_ph()
+print(f"  > Naive PH length: {len(l_ph.reduced_rho)}") # Must be N
+l_pdf = l_ph.pauli_pdf
+print(l_pdf.head())
