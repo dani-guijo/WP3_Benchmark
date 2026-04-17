@@ -7,3 +7,4 @@ qiskit-experiments==0.13.0
 qiskit-ibm-experiment==0.4.8
 qiskit-ibm-runtime==0.36.1
 qiskit-algorithms==0.4.0
+joblib==1.5.3
